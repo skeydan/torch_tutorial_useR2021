@@ -1,0 +1,352 @@
+---
+title: "Getting started with torch"
+output: learnr::tutorial
+runtime: shiny_prerendered
+---
+
+```{r setup, include=FALSE}
+library(learnr)
+library(torch)
+library(luz)
+library(dplyr)
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+## Welcome to `torch`! (And `luz`!)
+
+### `torch`
+
+[`torch`](http:/torch.mlverse.org) is an *R-native* framework for fast array computation with automatic differentiation and rich neural-network functionality.
+
+TBD pic
+
+### `luz`
+
+What `keras` is to `tensorflow` -- a high-level API streamlining and instrumenting the training process -- `luz` is to `torch`. While everything can be accomplished with `torch` alone, `luz`
+
+-   provides a *keras*-like, declarative interface to the training process
+
+```{=html}
+<!-- -->
+```
+-   removes boilerplate code
+
+-   keeps track of *metrics* commonly used in data science, and allows you to define your own
+
+-   provides a set of ready-to-use *callbacks* to control training, save model state, and more
+
+-   offers a convenient interface for defining your own callbacks
+
+### Ecosystem
+
+-   [torch](https:/github.com/mlverse/torch)
+
+-   [luz](https:/github.com/mlverse/luz)
+
+```{=html}
+<!-- -->
+```
+-   [torchvision](https:/github.com/mlverse/torchvision)
+
+-   [torchdatasets](https:/github.com/mlverse/torchdatasets)
+
+-   [tabnet](https:/github.com/mlverse/tabnet)
+
+-   ... and more!
+
+### Our goals for today
+
+1.  Understand and use `torch` tensors and neural network modules; understand and apply automatic differentiation.
+
+2.  Use `luz` to train neural networks in a declarative way.
+
+3.  Get started with time-series forecasting in `torch`.
+
+## `torch` tensors, modules, and autograd
+
+### Tensors
+
+#### Creating tensors
+
+##### Way 1: From R values
+
+Tensors can be created directly from R values using `torch_tensor()`. Optionally, we can define tensor *attributes*, including the data type, the device it lives on, and more.
+
+Here we are creating one-dimensional tensors (vectors):
+
+```{r, eval=FALSE, echo=TRUE}
+torch_tensor(1)
+torch_tensor(1, dtype = torch_int())
+torch_tensor(1, device = "cuda")
+
+torch_tensor(c(1, 2, 3)) # float tensor
+```
+
+Two-dimensional tensors can be created from R matrices.
+
+```{r, eval=FALSE, echo=TRUE}
+torch_tensor(matrix(1:9, ncol = 3)) # integer tensor
+torch_tensor(matrix(1:9, ncol = 3))$to(dtype = torch_float()) # cast to float
+
+torch_tensor(matrix(1:9, ncol = 3, byrow = TRUE))
+```
+
+Higher-dimensional tensors can be created from R arrays, but normally it is easier to use bulk creation functions.
+
+##### Way 2: Bulk creation functions.
+
+Multi-dimensional tensors following some defineable pattern are created passing in the desired dimensionality. A few examples (more exist):
+
+```{r, eval=FALSE, echo=TRUE}
+torch_zeros(c(3, 3))
+torch_rand(c(3, 3))
+
+```
+
+Another often-used type of function is used specifying the desired range:
+
+```{r, eval=FALSE, echo=TRUE}
+torch_arange(1, 9)
+torch_logspace(start = 0.1, end = 1.0, steps = 5)
+```
+
+#### Converting back to R
+
+Tensors are converted back to R using `as.numeric()`, `as.matrix()`, or `as.array()`:
+
+```{r, eval=FALSE, echo=TRUE}
+torch_tensor(2) %>% as.numeric()
+
+torch_ones(c(2, 2)) %>% as.matrix() 
+
+torch_ones(c(2, 2, 2)) %>% as.array() 
+```
+
+#### Operations on tensors
+
+A great number of operations can be performed on tensors. In general, there is a pair of *function* (not associated to any object) and corresponding *method* ("belonging" to a tensor instance) that do the same thing:
+
+```{r, eval=FALSE, echo=TRUE}
+t1 <- torch_tensor(c(1, 2, 3))
+t2 <- torch_tensor(c(1, 2, 3))
+
+torch_add(t1, t2)
+t1$add(t2)
+```
+
+In both cases, the original tensors are not modified; a new object is created. Normally, you would just assign this to a new variable:
+
+```{r, eval=FALSE, echo=TRUE}
+t3 <- t1$add(t2)
+
+t1
+t3
+```
+
+In the few cases where you need to modify the original tensor, you can make use of the corresponding underscore variants:
+
+```{r, eval=FALSE, echo=TRUE}
+t1$add_(t2)
+t1
+```
+
+Here are a few of the many matrix operations available. `$mul()` multiplies element-wise; `$matmul()` performs matrix multiplication; `$dot()` computes the dot product:
+
+```{r, eval=FALSE, echo=TRUE}
+t1$mul(t2)
+
+# both work (torch has no concept of row vs. column vector)
+t1$matmul(t2)
+t1$t()$matmul(t2)
+
+t1$dot(t2)
+```
+
+You can see that `torch` makes no distinction between row and column vectors. Above, `$t()` transposes the vector `t1`, but the matrix multiplication will work without.
+
+#### Reshaping tensors
+
+Often, you will need to reshape a tensor. Among the most common operations are `$squeeze()` and `$unsqueeze()`. The former adds removes a singleton dimension at the specified position (where singleton means the dimension is of length `1`):
+
+```{r, eval=FALSE, echo=TRUE}
+t1 <- torch_randn(c(1, 2, 3, 4))
+t1
+
+t1$squeeze(1)
+```
+
+The latter, in contrast, adds a singleton dimension:
+
+```{r, eval=FALSE, echo=TRUE}
+t1$unsqueeze(4)
+```
+
+This only works for singleton dimensions. `$view()` works for arbitrary reshaping, provided the number of elements allows for it. `t1` , above, has 24 values, which could as well be arranged as 6x4 or 1x24:
+
+```{r, eval=FALSE, echo=TRUE}
+t1$view(c(6, 4))
+
+t1$view(24)
+
+```
+
+`$view()` does not actually create a separate, re-shaped instance of its input tensor; instead, it has the new variable refer to the same location in memory, and just stores some metadata that tell `torch` how the respective bytes should be read. There are cases when `$view()` cannot be used; in this case, you can always use `$reshape()` instead. In contrast to `$view()`, `$reshape()` will make a physical copy if necessary.
+
+#### Indexing and slicing
+
+Indexing in `torch` is 1-based, just like in R overall. And just like in R, singleton dimensions will be dropped -- unless you specify `drop = FALSE`:
+
+```{r, eval=FALSE, echo=TRUE}
+t1
+
+t1[ , 1, , ]
+t1[ , 1, , , drop = FALSE]
+
+```
+
+Ranges of values ("slices") can be accessed using the semicolon:
+
+```{r, eval=FALSE, echo=TRUE}
+t1[1, 1, 1:2, ]
+t1[1, 1, 1:2, , drop = FALSE]
+```
+
+A shortcut that does not exist in R (where the same syntax has different semantics), index `-1` is used to refer to the last element in a dimension:
+
+```{r, eval=FALSE, echo=TRUE}
+t2 <- torch_tensor(1:17)
+t2[-1] 
+```
+
+#### Broadcasting
+
+In `torch`, tensors may be *broadcasted*. The principle is the same as when, in R, we add a scalar to every element in a vector. But it goes farther than that. We don't have the time to explain the rules in detail, but show a few examples as well as state the rules, for you to return at a later time.
+
+Here, we "add" a matrix and a vector, resulting in the vector being added to every *row* of the matrix. This is possible only because `t2` has a singleton dimension in front.
+
+```{r, eval=FALSE, echo=TRUE}
+t1 <- torch_randn(c(3,5))
+t2 <- torch_randn(c(1,5))
+
+t1$add(t2)
+```
+
+This example looks similar, but it involves an additional operation from `torch`'s side: `t2` is first virtually expanded to size 1x5 (a singleton dimension is added in front). Then, things go like above.
+
+```{r, eval=FALSE, echo=TRUE}
+t1 <- torch_randn(c(3,5))
+t2 <- torch_randn(c(5))
+
+t1$add(t2)
+```
+
+As a final example, here we see both virtual addition of a singleton dimension (to `t1`) and the "reusability" of singleton dimensions shown in the first example. The latter idea is used twice, for `t1` as well as `t2`.
+
+#### Appendix: Broadcasting rules
+
+    # 1 We align array shapes, starting from the right.
+      
+      # Example
+
+      # t1, shape:     8  1  6  1
+      # t2, shape:        7  1  5
+      
+
+    # 2 Starting to look from the right, the sizes along aligned axes either have to match exactly,
+    #   or one of them has to be equal to 1.
+    #   In the latter case, the 1-dimensional tensor is broadcast to the larger one.
+
+      # Example: this happens in the last (for t1) as well as the second-from-last dimension (for t2)
+
+      # t1, shape:     8  1  6  5
+      # t2, shape:        7  6  5
+
+
+    # 3 If on the left, one of the arrays has an additional axis (or more than one),
+    #   the other is virtually expanded to have a size of 1 in that place.
+    #   Then, broadcasting will happen as stated in (2).
+
+      # Example: this happens in t1’s leftmost dimension. First, there is a virtual expansion
+
+      # t1, shape:     8  1  6  1
+      # t2, shape:     1  7  1  5
+
+      # and then, broadcasting happens:
+      
+      # t1, shape:     8  1  6  1
+      # t2, shape:     8  7  1  5
+
+#### Exercise: tensors
+
+In the following exercises, try translating the R code into equivalent operations using `torch`.
+
+1.  Create two tensors representing a matrix and a vector, respectively:
+
+```{r tensors1, exercise=TRUE, exercise.eval=TRUE}
+# a matrix
+m1 <- matrix(1:32, ncol = 8, byrow = TRUE)
+
+# really a vector
+m2 <- matrix(1:8, ncol = 1)
+
+m1
+m2
+```
+
+```{r tensors1-hint}
+t1 <- torch_tensor(matrix(1:32, ncol = 8, byrow = TRUE))
+t2 <- torch_tensor(1:8)
+
+t1
+t2
+```
+
+2.  Multiply the matrices, sum over all elements, and take the square root:
+
+```{r tensors2, exercise=TRUE, exercise.eval=TRUE}
+(m1 %*% m2)^2 %>% sum() %>% sqrt()
+```
+
+```{r tensors2-hint}
+t1$matmul(t2)$square()$sum()$to(dtype = torch_float())$sqrt()
+```
+
+[Note how we need to cast to `float` in order to be able to call `torch_sqrt()`.]
+
+3.  Multiply each row in `m1` by the vector `m2` (element-wise):
+
+```{r tensors3, exercise=TRUE, exercise.eval=TRUE}
+m1 * rbind(t(m2), t(m2), t(m2), t(m2))
+```
+
+```{r tensors3-hint}
+t1 * t2
+```
+
+[Note how broadcasting takes care of the duplication for us. Also, note how no transposition is needed, as `torch` has no concept of row vectors vs. column vectors.]
+
+4.  Transpose the matrix `m1`, and compute column sums. (This should yield 4 values.)
+
+```{r tensors4, exercise=TRUE, exercise.eval=TRUE}
+t(m1) %>% apply(2, sum)
+```
+
+```{r tensors4-hint}
+
+t1$t()$sum(dim = 1)
+```
+
+[Note how applying the sum over dimension 1 (not 2) collapses the rows. Try to view it like this: Given an index into the dimensions, in R, we think "group by". In torch, we think "collapse".]
+
+5.  Standardize `m1` , subtracting the mean and dividing by the standard deviation.
+
+```{r tensors5, exercise=TRUE, exercise.eval=TRUE}
+(m1 - mean(m1)) / sd(m1)
+```
+
+```{r tensors5-hint}
+t1 <- t1$to(dtype = torch_float())
+(t1 - t1$mean()) / t1$std()
+```
+
+Just like `torch_sum()`, `torch_mean()` and `torch_std()` need their input to be of type `float`.
