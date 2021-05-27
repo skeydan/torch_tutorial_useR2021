@@ -276,7 +276,7 @@ As a final example, here we see both virtual addition of a singleton dimension (
       # t1, shape:     8  1  6  1
       # t2, shape:     8  7  1  5
 
-#### Exercise: tensors
+#### Exercise: Tensors
 
 In the following exercises, try translating the R code into equivalent operations using `torch`.
 
@@ -350,3 +350,157 @@ t1 <- t1$to(dtype = torch_float())
 ```
 
 Just like `torch_sum()`, `torch_mean()` and `torch_std()` need their input to be of type `float`.
+
+### Automatic differentiation with *autograd*
+
+#### How it works
+
+`torch` autograd provides automatic differentiation for operations executed on tensors. For this to happen, the "source" (or "leaf", as `torch` calls it) tensor -- the one *with respect to which* we'd like derivatives computed -- needs to be created with `requires_grad = TRUE`. Let's call it `a`:
+
+```{r, eval=FALSE, echo=TRUE}
+a <- torch_tensor(matrix(1:4, ncol = 2, byrow = TRUE), dtype = torch_float(), requires_grad = TRUE)
+
+```
+
+In this example, `c`, the output, depends on `a` via `b`:
+
+```{r, eval=FALSE, echo=TRUE}
+b <- a$mul(2)
+c <- b$sum()
+```
+
+So far, no derivatives have been computed yet. But `torch` knows what to do should we ask it to. More precisely, it knows the concrete operations it'll have to compute the derivatives for:
+
+```{r, eval=FALSE, echo=TRUE}
+c$grad_fn
+b$grad_fn
+```
+
+To actually have them computed, call `$backward()` on the output tensor:
+
+```{r, eval=FALSE, echo=TRUE}
+c$backward()
+```
+
+Now the gradient of `c` with respect to `a` can be found in `a`'s `$grad` field.
+
+```{r, eval=FALSE, echo=TRUE}
+a$grad
+```
+
+When we're updating a "leaf" tensor, for example in optimization, we don't want `torch` to record that operation for later computation of derivatives. In these cases, we need to tell it to exempt the operation in question from the process:
+
+```{r, eval=FALSE, echo=TRUE}
+     
+with_no_grad( {
+  a$sub_(0.1 * a$grad)
+})
+
+a
+```
+
+#### Minimizing a function with *autograd*
+
+We can use *autograd* to minimize a function. We define a parameter to hold $\mathbf{x}$. Then, in a loop, we evaluate the function at the current $\mathbf{x}$, compute the gradient, and subtract a fraction of the gradient from $\mathbf{x}$.
+
+```{r, eval=FALSE, echo=TRUE}
+
+# function to minimize
+f <- function(x) x^2 - 7
+
+# we start from x = 11
+param <- torch_tensor(11, requires_grad = TRUE)
+
+# learning rate: fraction of gradient to subtract
+lr <- 0.1
+
+for (i in 1:num_iterations) {
+  
+  # call function on current parameter value
+
+  # compute gradient of value w.r.t. parameter
+
+  # update parameter
+
+}
+```
+
+In the exercise, you're asked to fill in the missing pieces.
+
+#### Exercise: Function minimization
+
+Fill in the lines marked "TBD". When you have the code running, experiment with the learning rate and compare the results. What is a good learning rate for this problem?
+
+```{r autograd, exercise=TRUE, exercise.eval=TRUE}
+# function to minimize
+f <- function(x) x^2 - 7
+
+# we start from x = 11
+param <- torch_tensor(11, requires_grad = TRUE)
+
+# learning rate: fraction of gradient to subtract
+lr <- 0.1
+
+for (i in 1:10) {
+  
+  cat("Iteration: ", i, "\n")
+  
+  # call function with current parameter
+  value <- 777 # TBD
+  cat("Value is: ", as.numeric(value), "\n")
+  
+  # compute gradient of value w.r.t. parameter
+  # TBD
+  # uncomment the followig line when ready
+  # cat("Gradient is: ", as.matrix(param$grad), "\n")
+  
+  # update parameter
+  # wrap in with_no_grad
+  with_no_grad({
+    # subtract a fraction of gradient from param
+    # TBD
+    
+    # zero out on every iteration (would accumulate otherwise)
+    # TBD
+  })
+  
+  cat("After update: Param is: ", as.matrix(param), "\n\n")
+  
+  if (abs(-7 - as.numeric(value)) < 0.00005) break
+}
+```
+
+```{r autograd-hint}
+# function to minimize
+f <- function(x) x^2 - 7
+
+# we start from x = 11
+param <- torch_tensor(11, requires_grad = TRUE)
+
+# learning rate: fraction of gradient to subtract
+lr <- 0.5
+
+for (i in 1:10) {
+  
+  cat("Iteration: ", i, "\n")
+  
+  value <- f(param)
+  cat("Value is: ", as.numeric(value), "\n")
+  
+  # compute gradient of value w.r.t. parameter
+  value$backward()
+  cat("Gradient is: ", as.matrix(param$grad), "\n")
+  
+  # update
+  with_no_grad({
+    param$sub_(lr * param$grad)
+    # zero out on every iteration (would accumulate otherwise)
+    param$grad$zero_()
+  })
+  
+  cat("After update: Param is: ", as.matrix(param), "\n\n")
+  
+  if (abs(-7 - as.numeric(value)) < 0.00005) break
+}
+
+```
