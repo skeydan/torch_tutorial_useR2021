@@ -837,7 +837,7 @@ With `luz`, the overall flow looks a lot like in `keras`:
 
 3.  You train it using `fit()`, passing in the training and (optionally) validation data, as well as the number of epochs to train for and a set of callbacks (both optional).
 
-### End-to-end example: Classification on "Tiny ImageNet"
+### End-to-end example: MNIST 
 
 #### Data
 
@@ -847,62 +847,66 @@ In `torch` , data is fed to a network using `dataset`s and `dataloaders`. Their 
 
 -   `dataloader`: Feed the data to the model. Normally, this happens in *batches* of configurable size. Optionally, a `dataloader` may shuffle the data, and arrange for parallelization over a subset of available processors.
 
-Here, we make use of a `dataset` provided by `torchvision` .
+Here, we make use of the famou MNIST `dataset` provided by `torchvision` .
 
-The dataset -- a single `zip` file -- will be downloaded and unpacked the first time it is requested (unless it exists in the specified location already). This happens when creating the training set. When we instantiate the validation set, no download will take place.
+The dataset will be downloaded and prepared the first time it is requested (unless it exists in the specified location already). Below, this happens when creating the training set. When we instantiate the validation set, no download will take place.
 
-We use `transform =` to tell `torch` how the image data should be pre-processed.
+We use `transform =` to tell `torch` how the images should be pre-processed.
 
 ```{r}
-dir <- "~/Downloads/tiny-imagenet" 
+dir <- "~/Downloads/mnist" 
 
-options(timeout=600)
-train_ds <- tiny_imagenet_dataset(
-  dir,
-  download = TRUE,
+train_ds <- mnist_dataset(
+  root = dir,
+  train = TRUE,
   transform = function(x) {
     x %>%
-      transform_to_tensor() %>%
-      to_device(device) %>%
-      transform_resize(c(64, 64))
-  }
+      transform_to_tensor()
+  },
+  download = TRUE
 )
 
-valid_ds <- tiny_imagenet_dataset(
+valid_ds <- mnist_dataset(
   dir,
-  download = TRUE,
-  split = "val",
+  train = FALSE,
   transform = function(x) {
     x %>%
-      transform_to_tensor() %>%
-      to_device(device) %>%
-      transform_resize(c(64,64))
+      transform_to_tensor()
   }
 )
 
 ```
 
-Now, we create `dataloader`s for the training and validation phases, respectively.
+We can query `dataset`s for their length:
 
 ```{r}
+length(train_ds)
+length(valid_ds)
+```
 
-train_dl <- dataloader(train_ds, batch_size = 32, shuffle = TRUE, drop_last = TRUE)
-valid_dl <- dataloader(valid_ds, batch_size = 32, shuffle = FALSE, drop_last = TRUE)
+Now, we create the respective `dataloader`s.
 
+```{r}
+train_dl <- dataloader(train_ds, batch_size = 32, shuffle = TRUE)
+valid_dl <- dataloader(valid_ds, batch_size = 32, shuffle = FALSE)
+```
 
+With dataloaders, `length()` indicates the number of *batches*:
+
+```{r}
+length(train_dl)
+length(valid_dl)
 ```
 
 #### Model
 
 To speed up training, we make use of a pre-trained model that comes with `torchvision` (namely, AlexNet).
 
-Here you see a top-level model that does not use the `nn_sequential()` constructor. This is because, even though we *do* chain two submodules (the pre-trained model, and a sequential module consisting of a bunch of linear layers), there is one extra action we want to take: exempt the pre-trained model's weights from backpropagation.
+Here you see a top-level model that does not use the `nn_sequential()` constructor. This is because, even though we *are* chaining two submodules (the pre-trained model, and a sequential module consisting of a bunch of linear layers), there is one extra action we want to take: exempt the pre-trained model's weights from backpropagation.
 
-The idea here is: make use of a model that already has been trained for thousands of GPU hours, then adapt it for our specific task. This is called transfer learning. *Tiny ImageNet* has two hundred different classes, so we need the very last layer to have 200 ouput features.
+The idea here is: make use of a model that already has been trained for thousands of GPU hours; then, adapt it for our specific task. This is called transfer learning. We just need to make sure that the final linear layer has its number of output features set to the number of different classes present *in our task.* In MNIST, there are ten classes.
 
 ```{r}
-num_classes <- 200
-
 net <- nn_module(
   
   initialize = function(num_classes) {
@@ -914,9 +918,7 @@ net <- nn_module(
 
     self$model$classifier <- nn_sequential(
       nn_dropout(0.5),
-      nn_linear(9216, 512),
-      nn_relu(),
-      nn_linear(512, 256),
+      nn_linear(9216, 256),
       nn_relu(),
       nn_linear(256, num_classes)
     )
