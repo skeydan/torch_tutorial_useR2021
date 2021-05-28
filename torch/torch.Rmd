@@ -8,6 +8,7 @@ runtime: shiny_prerendered
 library(learnr)
 library(torch)
 library(luz)
+library(torchvision)
 library(dplyr)
 knitr::opts_chunk$set(echo = FALSE)
 ```
@@ -26,8 +27,6 @@ What `keras` is to `tensorflow` -- a high-level API streamlining and instrumenti
 
 -   provides a *keras*-like, declarative interface to the training process
 
-<!-- -->
-
 -   removes boilerplate code
 
 -   keeps track of *metrics* commonly used in data science, and allows you to define your own
@@ -42,9 +41,6 @@ What `keras` is to `tensorflow` -- a high-level API streamlining and instrumenti
 
 -   [luz](https:/github.com/mlverse/luz)
 
-```{=html}
-<!-- -->
-```
 -   [torchvision](https:/github.com/mlverse/torchvision)
 
 -   [torchdatasets](https:/github.com/mlverse/torchdatasets)
@@ -60,6 +56,19 @@ What `keras` is to `tensorflow` -- a high-level API streamlining and instrumenti
 2.  Use `luz` to train neural networks in a declarative way.
 
 3.  Get started with time-series forecasting in `torch`.
+
+### Prerequisites
+
+To follow this tutorial, you will need to install the following packages:
+
+```{r}
+library(torch)
+library(luz)
+library(torchvision)
+
+library(learnr)
+library(dplyr)
+```
 
 ## `torch` tensors, modules, and autograd
 
@@ -512,7 +521,7 @@ While everything can be done with tensors and *autograd* alone, coding a large n
 
 `torch` uses the term module for individual *layers* (e.g., linear layer, convolutional layer ...) as well as *models*, a.k.a. neural networks. The logic here is that modules are composable; a model/module is nothing but a composition of smaller modules, which again may contain yet smaller modules, etc.
 
-##### Linear module 
+##### Linear module
 
 Here is an affine transformation, coded manually:
 
@@ -814,4 +823,110 @@ for (t in 1:200) {
   # update weights 
   optimizer$step()
 }
+```
+
+## Training neural networks with `luz`
+
+`luz` is a high-level API for `torch` that allows you to train neural networks in a declarative style.
+
+With `luz`, the overall flow looks a lot like in `keras`:
+
+1.  You define a model.
+
+2.  You use `setup()` to configure it with a loss function, an optimizer, and a set of metrics.
+
+3.  You train it using `fit()`, passing in the training and (optionally) validation data, as well as the number of epochs to train for and a set of callbacks (both optional).
+
+### End-to-end example: Classification on "Tiny ImageNet"
+
+#### Data
+
+In `torch` , data is fed to a network using `dataset`s and `dataloaders`. Their respective responsibilities are:
+
+-   `dataset`: Return a single training (or validation, or test) item (in supervised learning, a list of input and target). Optionally, take care of any pre-processing required.
+
+-   `dataloader`: Feed the data to the model. Normally, this happens in *batches* of configurable size. Optionally, a `dataloader` may shuffle the data, and arrange for parallelization over a subset of available processors.
+
+Here, we make use of a `dataset` provided by `torchvision` .
+
+The dataset -- a single `zip` file -- will be downloaded and unpacked the first time it is requested (unless it exists in the specified location already). This happens when creating the training set. When we instantiate the validation set, no download will take place.
+
+We use `transform =` to tell `torch` how the image data should be pre-processed.
+
+```{r}
+dir <- "~/Downloads/tiny-imagenet" 
+
+options(timeout=600)
+train_ds <- tiny_imagenet_dataset(
+  dir,
+  download = TRUE,
+  transform = function(x) {
+    x %>%
+      transform_to_tensor() %>%
+      to_device(device) %>%
+      transform_resize(c(64, 64))
+  }
+)
+
+valid_ds <- tiny_imagenet_dataset(
+  dir,
+  download = TRUE,
+  split = "val",
+  transform = function(x) {
+    x %>%
+      transform_to_tensor() %>%
+      to_device(device) %>%
+      transform_resize(c(64,64))
+  }
+)
+
+```
+
+Now, we create `dataloader`s for the training and validation phases, respectively.
+
+```{r}
+
+train_dl <- dataloader(train_ds, batch_size = 32, shuffle = TRUE, drop_last = TRUE)
+valid_dl <- dataloader(valid_ds, batch_size = 32, shuffle = FALSE, drop_last = TRUE)
+
+
+```
+
+#### Model
+
+To speed up training, we make use of a pre-trained model that comes with `torchvision` (namely, AlexNet).
+
+Here you see a top-level model that does not use the `nn_sequential()` constructor. This is because, even though we *do* chain two submodules (the pre-trained model, and a sequential module consisting of a bunch of linear layers), there is one extra action we want to take: exempt the pre-trained model's weights from backpropagation.
+
+The idea here is: make use of a model that already has been trained for thousands of GPU hours, then adapt it for our specific task. This is called transfer learning. *Tiny ImageNet* has two hundred different classes, so we need the very last layer to have 200 ouput features.
+
+```{r}
+num_classes <- 200
+
+net <- nn_module(
+  
+  initialize = function(num_classes) {
+    self$model <- model_alexnet(pretrained = TRUE)
+
+    for (par in self$parameters) {
+      par$requires_grad_(FALSE)
+    }
+
+    self$model$classifier <- nn_sequential(
+      nn_dropout(0.5),
+      nn_linear(9216, 512),
+      nn_relu(),
+      nn_linear(512, 256),
+      nn_relu(),
+      nn_linear(256, num_classes)
+    )
+  },
+  forward = function(x) {
+    self$model(x)[,1]
+  }
+)
+```
+
+```{r}
+
 ```
