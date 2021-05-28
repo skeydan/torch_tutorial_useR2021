@@ -26,9 +26,8 @@ What `keras` is to `tensorflow` -- a high-level API streamlining and instrumenti
 
 -   provides a *keras*-like, declarative interface to the training process
 
-```{=html}
 <!-- -->
-```
+
 -   removes boilerplate code
 
 -   keeps track of *metrics* commonly used in data science, and allows you to define your own
@@ -503,4 +502,316 @@ for (i in 1:10) {
   if (abs(-7 - as.numeric(value)) < 0.00005) break
 }
 
+```
+
+### Modules and optimizers
+
+While everything can be done with tensors and *autograd* alone, coding a large neural network that way would be a pretty cumbersome task. Luckily, doing so is not necessary. For one, `torch` provides a rich set of neural network *modules* that hide away layer logic; and secondly, its *optimizers* encapsulate established optimization algorithms known for their efficiency in neural-network settings.
+
+#### Neural network modules
+
+`torch` uses the term module for individual *layers* (e.g., linear layer, convolutional layer ...) as well as *models*, a.k.a. neural networks. The logic here is that modules are composable; a model/module is nothing but a composition of smaller modules, which again may contain yet smaller modules, etc.
+
+##### Linear module 
+
+Here is an affine transformation, coded manually:
+
+```{r, eval=FALSE, echo=TRUE}
+# input data
+x <- torch_randn(c(7,2))
+
+# weights
+w <- torch_tensor(c(0.1, 0.1), requires_grad = TRUE)
+# bias
+b <- torch_tensor(0.5, requires_grad = TRUE)
+  
+x$matmul(w) + b  
+```
+
+We can achieve the same using a linear module:
+
+```{r, eval=FALSE, echo=TRUE}
+l <- nn_linear(in_features = 2, out_features = 1)
+l(x)
+```
+
+The result is different from above, because there we defined the weight ourselves. By default, `torch` will initialize the weights uniformly, with values ranging between `[-sqrt(num_features), sqrt(num_features)]`.
+
+```{r, eval=FALSE, echo=TRUE}
+l$weight 
+```
+
+Just to prove the point, we can manually initialize the module's weights:
+
+```{r, eval=FALSE, echo=TRUE}
+nn_init_constant_(l$weight, 0.1)
+nn_init_constant_(l$bias, 0.5)
+
+l(x)
+```
+
+With modules, we get automatic differentiation for free.
+
+Assume we want to minimize the sum of the outputs.
+
+```{r, eval=FALSE, echo=TRUE}
+loss <- l(x)$sum() 
+loss$grad_fn
+```
+
+We will still have to call `$backward()` to see actual derivatives being computed. Here they are still undefined:
+
+```{r, eval=FALSE, echo=TRUE}
+l$weight$grad
+l$bias$grad
+```
+
+Calling `$backward()` ...
+
+```{r, eval=FALSE, echo=TRUE}
+loss$backward()
+
+l$weight$grad
+l$bias$grad
+```
+
+##### Examples of other modules
+
+Many more modules exist. Here is a tensor mimicking a 32x32 RGB image:
+
+```{r, eval=FALSE, echo=TRUE}
+img <- torch_rand(c(1, 3, 32, 32))
+```
+
+Now `nn_conv2d()` is used to create a convolutional layer, and its 3x3 filter is applied to the image:
+
+```{r, eval=FALSE, echo=TRUE}
+conv <- nn_conv2d(in_channels = 3, out_channels = 1, kernel_size = 3, padding = 1)
+
+conv(img)
+```
+
+Another module commonly used in image processing is `nn_max_pool2d()` for spatial downsizing:
+
+```{r, eval=FALSE, echo=TRUE}
+pool <- nn_max_pool2d(kernel_size = 2)
+conv(img) %>% pool()
+```
+
+In the third section of this tutorial, we will encounter modules common in time series processing.
+
+##### Composing modules
+
+To build a "model" from "layers" such as the ones we showed above, we can use `nn_sequential()`. Here is a model that has two linear layers, with between them a ReLU module (`nn_relu()`). ReLU stands for "Rectified Linear Unit"; its purpose is to introduce some nonlinearity to this otherwise linear model. (It does this by setting all negative values to zero.)
+
+```{r, eval=FALSE, echo=TRUE}
+model <- nn_sequential(
+  nn_linear(2, 16),
+  nn_relu(),
+  nn_linear(16, 1)
+)
+
+model$parameters
+
+model(x)
+```
+
+You can also define your own modules. We'll see examples of this in the second part.
+
+#### Optimizers
+
+Among the most commonly-used optimizers in deep learning are Adam (`optim_adam()`), RMSProp (`optim_rmsprop()`), and Stochastic Gradient Descent (SGD; `optim_sgd()`).
+
+Here, we use `optim_adam()` to demonstrate their use.
+
+```{r, eval=FALSE, echo=TRUE}
+# some toy data
+x <- torch_tensor(c(1.2, 0.8, 0.7))
+y <- torch_tensor(1)
+```
+
+When an optimizer object is created, it needs to be told what to optimize -- namely, the model's parameters. Most optimizers also need to be passed the learning rate.
+
+```{r, eval=FALSE, echo=TRUE}
+model <- nn_sequential(
+  nn_linear(3, 8),
+  nn_relu(),
+  nn_linear(8, 1)
+)
+
+optimizer <- optim_adam(model$parameters, lr = 0.01)
+```
+
+We obtain a prediction:
+
+```{r, eval=FALSE, echo=TRUE}
+prediction <- model(x)
+prediction
+```
+
+We then use one of `torch`'s built-in loss functions to compute the loss (here, mean squared error):
+
+```{r, eval=FALSE, echo=TRUE}
+loss <- nnf_mse_loss(prediction, y)
+loss
+```
+
+We call `$backward()` on the loss to have gradients computed:
+
+```{r, eval=FALSE, echo=TRUE}
+loss$backward()
+```
+
+Now the gradients are known, but no changes have been made to the model's parameters yet.
+
+```{r, eval=FALSE, echo=TRUE}
+model$parameters
+```
+
+Calling `$step()` on the optimizer will make those changes:
+
+```{r, eval=FALSE, echo=TRUE}
+optimizer$step()
+```
+
+```{r, eval=FALSE, echo=TRUE}
+model$parameters
+```
+
+When actually training a network, we call the optimizer in a loop. We show an example of this next.
+
+##### A neural network
+
+First, we create the training data.
+
+```{r, eval=FALSE, echo=TRUE}
+# input dimensionality (number of input features)
+d_in <- 3
+# output dimensionality (number of predicted features)
+d_out <- 1
+# number of observations in training set
+n <- 100
+
+# create random data
+x <- torch_randn(n, d_in)
+y <- x[, 1, NULL] * 0.2 - x[, 2, NULL] * 1.3 - x[, 3, NULL] * 0.5 + torch_randn(n, 1)
+
+```
+
+Then, we define the network.
+
+```{r, eval=FALSE, echo=TRUE}
+# dimensionality of hidden layer
+d_hidden <- 32
+
+model <- nn_sequential(
+  nn_linear(d_in, d_hidden),
+  nn_relu(),
+  nn_linear(d_hidden, d_out)
+)
+
+```
+
+We create the optimizer:
+
+```{r, eval=FALSE, echo=TRUE}
+learning_rate <- 0.08
+
+# optimizer applies gradient updates for us
+optimizer <- optim_adam(model$parameters, lr = learning_rate)
+```
+
+And we 're ready for the training loop. In a loop, we
+
+-   obtain model predictions;
+
+-   compute the loss;
+
+-   propagate back the loss through the network and update the parameters.
+
+Note how when optimizing in a loop, we need to zero out gradients on every iteration.
+
+```{r, eval=FALSE, echo=TRUE}
+for (t in 1:200) {
+  
+  ### -------- Forward pass -------- 
+  y_pred <- model(x)
+  
+  ### -------- compute loss -------- 
+  # mean squared error loss
+  loss <- nnf_mse_loss(y_pred, y, reduction = "sum")
+  if (t %% 10 == 0)
+    cat("Epoch: ", t, "   Loss: ", loss$item(), "\n")
+  
+  ### -------- Backpropagation -------- 
+  
+  # Need to zero out the gradients before the backward pass, as they'd accumulate otherwise
+  optimizer$zero_grad()
+  
+  # compute gradients 
+  loss$backward()
+  
+  # update weights 
+  optimizer$step()
+}
+```
+
+While a lot more convenient than working with tensors only, this is still a pretty low-level way of training a neural network, and needs special attention to be devoted to particularities (like zeroing out the gradients). In part two, we'll see how to train neural networks much more comfortably with `luz`.
+
+#### Exercise: Training a neural network
+
+Below, you find the above end-to-end code to train a neural network. Try experimenting with it a bit:
+
+-   If you change the learning rate, what happens?
+
+-   Try other optimizers, such as `optim_sgd()`. How does that affect training?
+
+```{r modules, exercise=TRUE, exercise.eval=TRUE}
+# input dimensionality (number of input features)
+d_in <- 3
+# output dimensionality (number of predicted features)
+d_out <- 1
+# number of observations in training set
+n <- 100
+
+# create random data
+x <- torch_randn(n, d_in)
+y <- x[, 1, NULL] * 0.2 - x[, 2, NULL] * 1.3 - x[, 3, NULL] * 0.5 + torch_randn(n, 1)
+
+# dimensionality of hidden layer
+d_hidden <- 32
+
+model <- nn_sequential(
+  nn_linear(d_in, d_hidden),
+  nn_relu(),
+  nn_linear(d_hidden, d_out)
+)
+
+learning_rate <- 0.08
+
+# optimizer applies gradient updates for us
+optimizer <- optim_adam(model$parameters, lr = learning_rate)
+
+for (t in 1:200) {
+  
+  ### -------- Forward pass -------- 
+  y_pred <- model(x)
+  
+  ### -------- compute loss -------- 
+  # mean squared error loss
+  loss <- nnf_mse_loss(y_pred, y, reduction = "sum")
+  if (t %% 10 == 0)
+    cat("Epoch: ", t, "   Loss: ", loss$item(), "\n")
+  
+  ### -------- Backpropagation -------- 
+  
+  # Need to zero out the gradients before the backward pass, as they'd accumulate otherwise
+  optimizer$zero_grad()
+  
+  # compute gradients 
+  loss$backward()
+  
+  # update weights 
+  optimizer$step()
+}
 ```
