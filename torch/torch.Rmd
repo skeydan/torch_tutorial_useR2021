@@ -839,6 +839,8 @@ With `luz`, the overall flow looks a lot like in `keras`:
 
 ### End-to-end example: MNIST
 
+To introduce `luz`, we are going to do the "hello world" of deep learning: digit classification on the (in-)famous MNIST dataset. MNIST is available as part of the `torchvision` package.
+
 #### Data
 
 In `torch` , data is fed to a network using `dataset`s and `dataloaders`. Their respective responsibilities are:
@@ -847,54 +849,49 @@ In `torch` , data is fed to a network using `dataset`s and `dataloaders`. Their 
 
 -   `dataloader`: Feed the data to the model. Normally, this happens in *batches* of configurable size. Optionally, a `dataloader` may shuffle the data, and arrange for parallelization over a subset of available processors.
 
-Here, we make use of the famous MNIST `dataset` provided by `torchvision` .
+`torchvision` comes with a few image datasets, requestable via `xxx_dataset()`. They will be downloaded and prepared the first time they're instantiated (unless the data exist already in the specified location.
 
-The dataset will be downloaded and prepared the first time it is requested (unless it exists in the specified location already). Below, this happens when creating the training set. When we instantiate the validation set, no download will take place.
+Since we don't really need the full MNIST dataset for this demonstration, we only prepare the test split (indicated by the line `train = FALSE` below). We'll split it up manually into training and validation parts in a minute.
 
-We use `transform =` to tell `torch` how the images should be pre-processed.
+In the dataset constructor, the argument `transform =` serves to tell `torch` how the images should be pre-processed.
 
 ```{r}
 dir <- "~/Downloads/mnist" 
 
-train_ds <- mnist_dataset(
-  root = dir,
-  train = TRUE,
-  transform = function(x) {
-    x %>%
-      transform_to_tensor()
-  },
-  download = TRUE
-)
-
-valid_ds <- mnist_dataset(
+ds <- mnist_dataset(
   dir,
   train = FALSE,
   transform = function(x) {
-    x %>%
-      transform_to_tensor()
+    x %>% transform_to_tensor() 
   }
 )
-
 ```
 
-We can query `dataset`s for their length:
+`ds` now has 10,000 image-label pairs:
 
 ```{r}
-length(train_ds)
-length(valid_ds)
+length(ds)
 ```
 
-We can use indexing to inspect individual (x,y) pairs:
+We can use indexing to inspect them:
 
 ```{r}
-train_ds[1]
+ds[1]
 ```
 
-Now, we create the respective `dataloader`s.
+Using `dataset_subset()`, we divide those 10,000 pairs into training and validation sets:
 
 ```{r}
-train_dl <- dataloader(train_ds, batch_size = 32, shuffle = TRUE)
-valid_dl <- dataloader(valid_ds, batch_size = 32, shuffle = FALSE)
+train_id <- sample.int(length(ds), size = 0.7*length(ds))
+train_ds <- dataset_subset(ds, indices = train_id)
+valid_ds <- dataset_subset(ds, indices = which(!seq_along(ds) %in% train_id))
+```
+
+Next, we create the respective `dataloader`s.
+
+```{r}
+train_dl <- dataloader(train_ds, batch_size = 128, shuffle = TRUE)
+valid_dl <- dataloader(valid_ds, batch_size = 128, shuffle = FALSE)
 ```
 
 With `dataloader`s, `length()` indicates the number of *batches*:
@@ -906,31 +903,32 @@ length(valid_dl)
 
 #### Model
 
-To speed up training, we make use of a pre-trained model that comes with `torchvision` (namely, AlexNet).
-
-Here you see a top-level model that does not use the `nn_sequential()` constructor. This is because, even though we *are* chaining two submodules (the pre-trained model, and a sequential module consisting of a bunch of linear layers), there is one extra action we want to take: exempt the pre-trained model's weights from backpropagation.
-
-The idea here is: make use of a model that already has been trained for thousands of GPU hours; then, adapt it for our specific task. This is called transfer learning. We just need to make sure that the final linear layer has its number of output features set to the number of different classes present *in our task.* In MNIST, there are ten classes.
+The model is a convolutional neural network that filters and downsizes its input, finally arriving at a class prediction. There are ten types of digits (0-9), and for each digit, it will output a score for each of the ten possible labels. In the definition of the model, note the parameter `num_classes`. In this example, there is no real need to parameterize the number of classes the model can work with; however, we'd like to show how with `liz`, you can keep the model definition flexible and pass the desired configuration at training time.
 
 ```{r}
 net <- nn_module(
-  
+  "Net",
   initialize = function(num_classes) {
-    self$model <- model_alexnet(pretrained = TRUE)
-
-    for (par in self$parameters) {
-      par$requires_grad_(FALSE)
-    }
-
-    self$model$classifier <- nn_sequential(
-      nn_dropout(0.5),
-      nn_linear(9216, 256),
-      nn_relu(),
-      nn_linear(256, num_classes)
-    )
+    self$conv1 <- nn_conv2d(1, 32, 3, 1)
+    self$conv2 <- nn_conv2d(32, 64, 3, 1)
+    self$dropout1 <- nn_dropout2d(0.25)
+    self$dropout2 <- nn_dropout2d(0.5)
+    self$fc1 <- nn_linear(9216, 128)
+    self$fc2 <- nn_linear(128, num_classes)
   },
   forward = function(x) {
-    self$model(x)[,1]
+    x %>% 
+      self$conv1() %>% 
+      nnf_relu() %>% 
+      self$conv2() %>% 
+      nnf_relu() %>% 
+      nnf_max_pool2d(2) %>% 
+      self$dropout1() %>% 
+      torch_flatten(start_dim = 2) %>% 
+      self$fc1() %>% 
+      nnf_relu() %>% 
+      self$dropout2() %>% 
+      self$fc2()
   }
 )
 ```
