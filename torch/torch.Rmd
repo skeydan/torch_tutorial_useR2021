@@ -855,7 +855,7 @@ Since we don't really need the full MNIST dataset for this demonstration, we onl
 
 In the dataset constructor, the argument `transform =` serves to tell `torch` how the images should be pre-processed.
 
-```{r}
+```{r, eval=FALSE, echo=TRUE}
 dir <- "~/Downloads/mnist" 
 
 ds <- mnist_dataset(
@@ -869,19 +869,19 @@ ds <- mnist_dataset(
 
 `ds` now has 10,000 image-label pairs:
 
-```{r}
+```{r, eval=FALSE, echo=TRUE}
 length(ds)
 ```
 
 We can use indexing to inspect them:
 
-```{r}
+```{r, eval=FALSE, echo=TRUE}
 ds[1]
 ```
 
 Using `dataset_subset()`, we divide those 10,000 pairs into training and validation sets:
 
-```{r}
+```{r, eval=FALSE, echo=TRUE}
 train_id <- sample.int(length(ds), size = 0.7*length(ds))
 train_ds <- dataset_subset(ds, indices = train_id)
 valid_ds <- dataset_subset(ds, indices = which(!seq_along(ds) %in% train_id))
@@ -889,23 +889,25 @@ valid_ds <- dataset_subset(ds, indices = which(!seq_along(ds) %in% train_id))
 
 Next, we create the respective `dataloader`s.
 
-```{r}
+```{r, eval=FALSE, echo=TRUE}
 train_dl <- dataloader(train_ds, batch_size = 128, shuffle = TRUE)
 valid_dl <- dataloader(valid_ds, batch_size = 128, shuffle = FALSE)
 ```
 
 With `dataloader`s, `length()` indicates the number of *batches*:
 
-```{r}
+```{r, eval=FALSE, echo=TRUE}
 length(train_dl)
 length(valid_dl)
 ```
 
 #### Model
 
-The model is a convolutional neural network that filters and downsizes its input, finally arriving at a class prediction. There are ten types of digits (0-9), and for each digit, it will output a score for each of the ten possible labels. In the definition of the model, note the parameter `num_classes`. In this example, there is no real need to parameterize the number of classes the model can work with; however, we'd like to show how with `liz`, you can keep the model definition flexible and pass the desired configuration at training time.
+The model is a convolutional neural network that successively filters and downsizes its input, to finally arrive at a class prediction. There are ten types of digits (0-9), and for each digit, it will output a score for each of the ten possible labels.
 
-```{r}
+In the definition of the model, note the parameter `num_classes`. In this example, there is no real need to parameterize the number of classes the model can work with; however, we'd like to show how with `luz`, you can keep the model definition flexible and pass in the desired configuration at training time.
+
+```{r, eval=FALSE, echo=TRUE}
 net <- nn_module(
   "Net",
   initialize = function(num_classes) {
@@ -933,6 +935,231 @@ net <- nn_module(
 )
 ```
 
-```{r}
+#### Training
 
+Now that we have the model definition, all that separates us from watching it being trained are two calls to `luz`: `setup()` and `fit()`.
+
+-   Using `setup()`, we configure the loss function and the optimizer to be used; additionally, we can ask for a set of metrics to be computed.
+
+-   By calling `fit`, we start the training process. The first argument is always the `dataloader` containing the training data; the remaining arguments are optional and include the number of epochs to train for, and possibly another `dataloader` for validation.
+
+While `setup()` and `fit()` are "obligatory", `set_hparams()`, located between the two, is not. This function can be used to set variables used in the model; here we're passing in the desired value for `num_classes` referred to above.
+
+```{r, eval=FALSE, echo=TRUE}
+fitted <- net %>%
+  setup(
+    loss = nn_cross_entropy_loss(),
+    optimizer = optim_adam,
+    metrics = list(
+      luz_metric_accuracy()
+    )
+  ) %>%
+  set_hparams(num_classes = 10) %>%
+  fit(train_dl, epochs = 3, valid_data = valid_dl, verbose = TRUE)
+```
+
+#### Predictions
+
+Predictions may be obtained using `predict()`, passing in the fitted model and the `dataloader` for which we want predictions computed.
+
+These predictions are nothing but the output from the model's final layer:
+
+```{r, eval=FALSE, echo=TRUE}
+preds <- predict(fitted, valid_dl)
+preds[1:10, ]
+```
+
+The best-matching class here is the one for which the tensor value (the *score*) is highest. If we want actual probabilities, we can run the raw scores through a *softmax*:
+
+```{r, eval=FALSE, echo=TRUE}
+(nnf_softmax(preds[1:10, ], dim = 2))$to(device = "cpu") %>% as.matrix() %>% round(2)
+```
+
+#### Saving and loading models
+
+Rounding up on `luz` essentials, here are its helper functions to save and load models:
+
+```{r, eval=FALSE, echo=TRUE}
+luz_save(fitted, "mnist-cnn.pt")
+copy <- luz_load("mnist-cnn.pt")
+```
+
+#### Exercise: Callbacks
+
+Callbacks offer an extremely flexible way to customize the training routine. `luz` itself uses callbacks internally, too, to compute metrics, for example, or to display training progress.
+
+Here is a simple callback that gets active at two specified categories of "time":
+
+1.  Whenever training has finished on a single batch (`on_train_batch_end()`).
+
+2.  Whenever training has completed one full epoch (`on_epoch_end())`.
+
+```{r, eval=FALSE, echo=TRUE}
+print_callback <- luz_callback(
+  
+  name = "print_callback",
+  
+  initialize = function(message) {
+    self$message <- message
+  },
+  
+  on_train_batch_end = function() {
+    cat("Iteration ", ctx$iter, "\n")
+  },
+  
+  on_epoch_end = function() {
+    cat(self$message, "\n")
+  }
+)
+```
+
+Callbacks are passed to `luz` in the `fit()` call:
+
+```{r, eval=FALSE, echo=TRUE}
+fitted <- net %>%
+  setup(...) %>%
+  fit(..., callbacks = list(
+    print_callback(message = "Done!")
+  ))
+```
+
+Via a special-purpose context reference (`ctx`), callbacks have access to a large number of model-internal and process-dependent objects, such as the model itself, a list of optimizers used, the current epoch, and more.
+
+For this exercise, implement a callback that at the end of every epoch, says "Done with epoch \<n\>", and plug it into the training routine.
+
+```{r custom-callback, exercise=TRUE, exercise.eval=TRUE}
+which_epoch_callback <- luz_callback(
+  
+  name = "which_epoch_callback",
+  
+  # TBD
+  }
+)
+```
+
+```{r custom-callback-hint}
+which_epoch_callback <- luz_callback(
+  
+  name = "which_epoch_callback",
+  
+  on_epoch_end = function() {
+    cat("Done with epoch", ctx$epoch, "\n")
+  }
+)
+```
+
+#### Exercise: Creating a custom metric
+
+While `luz` provides a great number of metrics, you can easily implement your own if needed. *Metric* objects keep running aggregates of the indicator. in question. At each epoch, aggregates are re-initialized to their starting values (zero, in most cases).
+
+A `luz` metric is an R6 object with three methods:
+
+-   `initialize()`, used to define the starting values for every variable to keep track of;
+
+-   `update()`, telling `luz` how to update these variables at every training (validation, resp.) step; and
+
+-   `compute()`, used to define the indicator to be outputted to the user.
+
+Below, you'll be tasked to implement accuracy yourself. Here is an outline of what's to be done:
+
+```{r, eval=FALSE, echo=TRUE}
+my_accuracy <- luz_metric(
+  abbrev = "my_acc", 
+  
+  initialize = function() {
+    # initialize two fields:
+    # one to hold the number of correct predictions
+    # one to hold the running total of predictions
+    # e.g.
+    # self$correct <-
+    # self$total <-
+  },
+ 
+  update = function(preds, target) {
+    # 1: use pred (function input no. 1) to compute the indices of the most likely class (for the complete batch)
+    # pred <- 
+    
+    # 2: update self$correct: add number of correct predictions
+    # self$correct <- 
+    
+    # 3: update the running total of predictions
+    # self$total <- 
+  },
+  
+  compute = function() {
+    # return proportion of correct predictions
+  }
+)
+```
+
+You can substitute your own implementation of accuracy in the training process, replacing `luz_metric_accuracy()`. Before doing that, test your implementation standalone, comparing with the official implementation:
+
+```{r, eval=FALSE, echo=TRUE}
+preds_10 <- preds[1:10, ]
+target_10 <- valid_ds[1:10]$y
+
+metric <- luz_metric_accuracy()
+metric <- metric$new()
+metric$update(preds_10, target_10)
+metric$compute()
+
+metric2 <- my_accuracy()
+metric2 <- metric2$new()
+metric2$update(preds_10, target_10)
+metric2$compute()
+```
+
+```{r custom-metric, exercise=TRUE, exercise.eval=TRUE}
+my_accuracy <- luz_metric(
+  abbrev = "my_acc", 
+  
+  initialize = function() {
+    # initialize two fields:
+    # one to hold the number of correct predictions
+    # one to hold the running total of predictions
+    # e.g.
+    # self$correct <-
+    # self$total <-
+  },
+ 
+  update = function(preds, target) {
+    # 1: use preds (function input no. 1) to compute the indices of the classes with the highest scores
+    # pred <- 
+    
+    # 2: update self$correct: add number of correct predictions
+    # self$correct <- 
+    
+    # 3: update the running total of predictions
+    # self$total <- 
+  },
+  
+  compute = function() {
+    # return proportion of correct predictions
+  }
+)
+```
+
+```{r custom-metric-hint}
+my_accuracy <- luz_metric(
+  abbrev = "my_acc", 
+  
+  initialize = function() {
+    self$correct <- 0
+    self$total <- 0
+  },
+ 
+  update = function(preds, target) {
+    pred <- torch::torch_argmax(preds, dim = 2)
+    self$correct <- self$correct + 
+      (pred == target)$
+      to(dtype = torch::torch_float())$
+      sum()$
+      item()
+    self$total <- self$total + pred$numel()
+  },
+  
+  compute = function() {
+    self$correct/self$total
+  }
+)
 ```
