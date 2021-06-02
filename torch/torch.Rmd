@@ -9,7 +9,14 @@ library(learnr)
 library(torch)
 library(luz)
 library(torchvision)
-library(dplyr)
+library(tidyverse)
+library(tsibble)
+library(tsibbledata)
+library(lubridate)
+library(fable)
+library(feasts)
+library(zeallot)
+
 knitr::opts_chunk$set(echo = FALSE)
 ```
 
@@ -984,7 +991,7 @@ luz_save(fitted, "mnist-cnn.pt")
 copy <- luz_load("mnist-cnn.pt")
 ```
 
-#### Exercise: Callbacks
+### Exercise: Callbacks
 
 Callbacks offer an extremely flexible way to customize the training routine. `luz` itself uses callbacks internally, too, to compute metrics, for example, or to display training progress.
 
@@ -1048,7 +1055,7 @@ which_epoch_callback <- luz_callback(
 )
 ```
 
-#### Exercise: Creating a custom metric
+### Exercise: Creating a custom metric
 
 While `luz` provides a great number of metrics, you can easily implement your own if needed. *Metric* objects keep running aggregates of the indicator. in question. At each epoch, aggregates are re-initialized to their starting values (zero, in most cases).
 
@@ -1163,3 +1170,256 @@ my_accuracy <- luz_metric(
   }
 )
 ```
+
+## Time-series forecasting
+
+To illustrate time-series forecasting with `torch`, we make use of the `vic_elec` dataset, available through package `tsibbledata`. It provides three years of half-hourly electricity demand for Victoria, Australia, augmented by same-resolution temperature information and a daily holiday indicator.
+
+For faster training, we aggregate the data by day. We throw away everything but `Demand` itself, relying on the univariate series exclusively.
+
+```{r}
+vic_elec_daily <- vic_elec %>%
+  select(Time, Demand) %>%
+  index_by(Date = date(Time)) %>%
+  summarise(
+    Demand = sum(Demand) / 1e3) 
+```
+
+To quickly get an impression what we're dealing with, it's convenient to use `feasts::STL()`.
+
+```{r}
+cmp <- vic_elec_daily %>% 
+  model(STL(Demand)) %>% 
+  components()
+
+cmp %>% autoplot()
+
+```
+
+Before we create a dataset, a dataloader, and a model, let's quickly talk about time-series prediction with deep learning in general.
+
+### Time-series forecasting with deep learning in a nutshell
+
+In a linear model, individual observations are independent. Their order does not matter. The same holds for sets of images (not the pixels *in* an image, though).
+
+But with sequences, such as spoken language or consecutive-in-time measurements, the order is essential. We thus need neural network models that respect sequentiality.
+
+Traditionally, the type of data we're talking about has been the domain of *recurrent neural networks* (RNNs). They are called *recurrent* because, in addition to handling a new batch item at every [processing] time step, they keep -- and continuously update -- an internal state. This is often referred to as the *hidden* state.
+
+In this family of RNNs, the most-established model architectures are *Gated Recurrent Unit* (GRU) and *Long Short-Term Memory* (LSTM). LSTM differs from GRU in that it keeps an additional internal state, sometimes called cell state, that is said to enable it to keep longer-term "memories". In this tutorial, we use GRUs only, but adapting the code for LSTM is a manageable effort.
+
+For RNNs to learn temporal dependencies, the data need to be prepared in a way that each batch item contains information about several time steps. Let's see how that works.
+
+### Creating a dataset for time-series forecasting
+
+In our introduction to `luz`, we were able to make use of a pre-existing `dataset` object, namely, `mnist_dataset()` provided by `torchvision`. Now, we will build a custom `dataset`.
+
+#### The `dataset` object
+
+`dataset`s are R6 objects that implement three methods: `initialize()`, `.getitem()`, and `.length()`. Here
+
+-   `initialize()` is where the data are stored into instance variables (and possibly, pre-processed);
+
+-   `.length()` tells the caller (a `dataloader`, in general) how many items there are in the `dataset`; and
+
+-   `.getitem()` defines what exactly should be returned as a single `<source, target>` (i.e., (`x,y)` ) pair.
+
+The last one of these is where the "business logic" surfaces.
+
+#### A time-series `dataset` for one-step-ahead prediction
+
+For each batch item to contain information about a sequence, `x` needs to be a vector of consecutive measurements. How many measurements? This depends on what we know about the time series (as well as experimentation).
+
+As to `y`, it depends on the number of time steps we want to forecast ahead. Here, we first start with a single step. (We'll adapt this for multi-step prediction later.)
+
+To allow for experimentation with the number of time steps to learn from, we make `elec_dataset()` configurable in that respect (see the `n_timesteps` parameter passed to `initialize()`).
+
+Then, *for each item*, the `dataset` returns a list of `(x,y)`, where `x` is a vector of consecutive observations (starting at the current index), and `y` is the measurement right thereafter:
+
+```{r}
+elec_dataset <- dataset(
+  name = "elec_dataset",
+  
+  initialize = function(x, n_timesteps) {
+    
+    self$n_timesteps <- n_timesteps
+    self$x <- torch_tensor((x - train_mean) / train_sd)
+
+  },
+  
+  .getitem = function(i) {
+    
+    start <- i
+    end <- start + self$n_timesteps - 1
+    
+    list(
+      x = self$x[start:end],
+      y = self$x[end + 1]
+    )
+    
+  },
+  
+  .length = function() {
+    length(self$x) - self$n_timesteps
+  }
+)
+```
+
+Now, we create instances of such a `dataset` for training as well as validation. We first need to extract the `Demand` feature from the `tsibble`:
+
+```{r}
+elec_train <- vic_elec_daily %>% 
+  filter(year(Date) %in% c(2012, 2013)) %>%
+  as_tibble() %>%
+  select(Demand) %>%
+  as.matrix()
+
+elec_valid <- vic_elec_daily %>% 
+  filter(year(Date) == 2014) %>%
+  as_tibble() %>%
+  select(Demand) %>%
+  as.matrix()
+
+```
+
+For better training performance, we standardize the data. To that end, we compute mean and standard deviation for the training set:
+
+```{r}
+train_mean <- mean(elec_train)
+train_sd <- sd(elec_train)
+```
+
+From inspection, two weeks seems like a reasonable time period to learn from:
+
+```{r}
+n_timesteps <- 7 * 2
+
+train_ds <- elec_dataset(elec_train, n_timesteps)
+valid_ds <- elec_dataset(elec_valid, n_timesteps)
+
+length(train_ds)
+```
+
+Let's verify the `dataset` returns what we expect it to.
+
+`x`, at some arbitrary index, should be a matrix, with fourteen rows and a single column, where the column corresponds to the single feature, and the rows hold the consecutive measurements. `y`, on the other hand, should be a vector of length one.
+
+```{r}
+train_ds[1]
+```
+
+#### Creating the respective `dataloader`s
+
+While there is nothing new about the calls to `dataloader()` here, it is interesting to check the shape of the batches it returns.
+
+```{r}
+batch_size <- 32
+
+train_dl <- train_ds %>% dataloader(batch_size = batch_size, shuffle = TRUE)
+
+valid_dl <- valid_ds %>% dataloader(batch_size = batch_size)
+
+```
+
+A batch of `x`s now has shape `(32, 14, 1)`. Since after batching, the batch items are found in the leftmost dimension, the consecutive time steps are now located in the second-from-the-left one:
+
+```{r}
+b <- dataloader_make_iter(train_dl) %>% dataloader_next()
+b
+
+```
+
+This will turn out to be important because of the shape of the inputs expected by RNNs.
+
+### Model
+
+The model is basically just a wrapper for an RNN, with an add-on linear layer that outputs a single prediction.
+
+Before we look at the way the model makes use of the RNN (a GRU), let's inspect how a GRU behaves individually. We will want to know
+
+-   what arguments it expects on instantiation;
+
+-   what arguments it expects when called; and
+
+-   what it returns.
+
+```{r}
+# batch of 3, with 4 time steps each and a single feature
+# we will specify batch_first = TRUE when creating the LSTM
+input <- torch_randn(c(3, 4, 1))
+input
+
+
+# default args
+# return shape = (batch_size, units)
+#
+# note: there is an additional argument num_layers that we could use to specify a stacked GRU - effectively composing two GRU modules
+# default for num_layers is 1 though 
+gru <- nn_gru(
+  input_size = 1, # number of input features
+  hidden_size = 1, # number of hidden (and output!) features
+  batch_first = TRUE # for easy comparability with Keras
+)
+
+nn_init_constant_(gru$weight_ih_l1, 1)
+nn_init_constant_(gru$weight_hh_l1, 1)
+nn_init_constant_(gru$bias_ih_l1, 0)
+nn_init_constant_(gru$bias_hh_l1, 0)
+
+# returns a list of length 2, namely
+#   - outputs, of shape (batch_size, time steps, hidden_size) - given we specified batch_first
+#       Note 1: If this is a stacked GRU, these are the outputs from the last layer only.
+#               For our current purpose, this is irrelevant, as we're restricting ourselves to single-layer GRUs.
+#       Note 2: hidden_size here is equivalent to units in Keras - both specify number of features
+#  - list of:
+#    - hidden state for the last time step, of shape (num_layers, batch_size, hidden_size)
+#    - cell state for the last time step, of shape (num_layers, batch_size, hidden_size)
+#       Note 3: For a single-layer GRU, these values are already provided in the first list item.
+gru(input)
+
+
+```
+
+```{r}
+model <- nn_module(
+  
+  initialize = function(input_size, hidden_size) {
+
+    self$rnn <- nn_gru(
+        input_size = input_size,
+        hidden_size = hidden_size,
+        batch_first = TRUE
+      )
+    
+    self$output <- nn_linear(hidden_size, 1)
+    
+  },
+  
+  forward = function(x) {
+    
+    # list of [output, hidden]
+    # we use the output, which is of size (batch_size, n_timesteps, hidden_size)
+    x <- self$rnn(x)[[1]]
+    
+    # from the output, we only want the final timestep
+    # shape now is (batch_size, hidden_size)
+    x <- x[ , dim(x)[2], ]
+    
+    # feed this to a single output neuron
+    # final shape then is (batch_size, 1)
+    x %>% self$output() 
+  }
+  
+)
+
+```
+
+### Exercise: Extending the model to multi-step prediction
+
+#### What changes
+
+#### Exercise part 1: Adapting the `dataset`
+
+#### Exercise part 2: Adapting the model
+
+#### Exercise part 3: Run training and check
