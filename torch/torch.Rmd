@@ -466,7 +466,7 @@ for (i in 1:10) {
   
   # compute gradient of value w.r.t. parameter
   # TBD
-  # uncomment the followig line when ready
+  # uncomment the following line when ready
   # cat("Gradient is: ", as.matrix(param$grad), "\n")
   
   # update parameter
@@ -1040,7 +1040,8 @@ which_epoch_callback <- luz_callback(
   name = "which_epoch_callback",
   
   # TBD
-  }
+  
+  
 )
 ```
 
@@ -1177,7 +1178,7 @@ To illustrate time-series forecasting with `torch`, we make use of the `vic_elec
 
 For faster training, we aggregate the data by day. We throw away everything but `Demand` itself, relying on the univariate series exclusively.
 
-```{r}
+```{r, eval=FALSE, echo=TRUE}
 vic_elec_daily <- vic_elec %>%
   select(Time, Demand) %>%
   index_by(Date = date(Time)) %>%
@@ -1187,7 +1188,7 @@ vic_elec_daily <- vic_elec %>%
 
 To quickly get an impression what we're dealing with, it's convenient to use `feasts::STL()`.
 
-```{r}
+```{r, eval=FALSE, echo=TRUE}
 cmp <- vic_elec_daily %>% 
   model(STL(Demand)) %>% 
   components()
@@ -1196,7 +1197,7 @@ cmp %>% autoplot()
 
 ```
 
-Before we create a dataset, a dataloader, and a model, let's quickly talk about time-series prediction with deep learning in general.
+Before we create a `dataset`, a `dataloader`, and a model, let's quickly talk about time-series prediction with deep learning in general.
 
 ### Time-series forecasting with deep learning in a nutshell
 
@@ -1204,13 +1205,13 @@ In a linear model, individual observations are independent. Their order does not
 
 But with sequences, such as spoken language or consecutive-in-time measurements, the order is essential. We thus need neural network models that respect sequentiality.
 
-Traditionally, the type of data we're talking about has been the domain of *recurrent neural networks* (RNNs). They are called *recurrent* because, in addition to handling a new batch item at every [processing] time step, they keep -- and continuously update -- an internal state. This is often referred to as the *hidden* state.
+Traditionally, the type of data we're talking about has been the domain of *recurrent neural networks* (RNNs). They are called *recurrent* because, in addition to handling a new batch item at every [processing] time step, they keep -- and continuously update -- an internal state. This is often referred to as the *hidden* *state*.
 
-In this family of RNNs, the most-established model architectures are *Gated Recurrent Unit* (GRU) and *Long Short-Term Memory* (LSTM). LSTM differs from GRU in that it keeps an additional internal state, sometimes called cell state, that is said to enable it to keep longer-term "memories". In this tutorial, we use GRUs only, but adapting the code for LSTM is a manageable effort.
+In this family of RNNs, the most-established model architectures are *Gated Recurrent Unit* (GRU) and *Long Short-Term Memory* (LSTM). LSTM differs from GRU in that it keeps an additional internal state, sometimes called *cell state*, that is said to enable it to keep longer-term remembrances. In this tutorial, we use GRUs only, but adapting the code for LSTM is a manageable effort.
 
 For RNNs to learn temporal dependencies, the data need to be prepared in a way that each batch item contains information about several time steps. Let's see how that works.
 
-### Creating a dataset for time-series forecasting
+### Creating a `dataset` for time-series forecasting
 
 In our introduction to `luz`, we were able to make use of a pre-existing `dataset` object, namely, `mnist_dataset()` provided by `torchvision`. Now, we will build a custom `dataset`.
 
@@ -1230,13 +1231,13 @@ The last one of these is where the "business logic" surfaces.
 
 For each batch item to contain information about a sequence, `x` needs to be a vector of consecutive measurements. How many measurements? This depends on what we know about the time series (as well as experimentation).
 
-As to `y`, it depends on the number of time steps we want to forecast ahead. Here, we first start with a single step. (We'll adapt this for multi-step prediction later.)
+As to `y`, it depends on the number of time steps we want to forecast ahead. Here, we start with a single step. (We'll adapt this for multi-step prediction later.)
 
 To allow for experimentation with the number of time steps to learn from, we make `elec_dataset()` configurable in that respect (see the `n_timesteps` parameter passed to `initialize()`).
 
 Then, *for each item*, the `dataset` returns a list of `(x,y)`, where `x` is a vector of consecutive observations (starting at the current index), and `y` is the measurement right thereafter:
 
-```{r}
+```{r, eval=FALSE, echo=TRUE}
 elec_dataset <- dataset(
   name = "elec_dataset",
   
@@ -1267,7 +1268,7 @@ elec_dataset <- dataset(
 
 Now, we create instances of such a `dataset` for training as well as validation. We first need to extract the `Demand` feature from the `tsibble`:
 
-```{r}
+```{r, eval=FALSE, echo=TRUE}
 elec_train <- vic_elec_daily %>% 
   filter(year(Date) %in% c(2012, 2013)) %>%
   as_tibble() %>%
@@ -1284,14 +1285,14 @@ elec_valid <- vic_elec_daily %>%
 
 For better training performance, we standardize the data. To that end, we compute mean and standard deviation for the training set:
 
-```{r}
+```{r, eval=FALSE, echo=TRUE}
 train_mean <- mean(elec_train)
 train_sd <- sd(elec_train)
 ```
 
 From inspection, two weeks seems like a reasonable time period to learn from:
 
-```{r}
+```{r, eval=FALSE, echo=TRUE}
 n_timesteps <- 7 * 2
 
 train_ds <- elec_dataset(elec_train, n_timesteps)
@@ -1304,15 +1305,13 @@ Let's verify the `dataset` returns what we expect it to.
 
 `x`, at some arbitrary index, should be a matrix, with fourteen rows and a single column, where the column corresponds to the single feature, and the rows hold the consecutive measurements. `y`, on the other hand, should be a vector of length one.
 
-```{r}
+```{r, eval=FALSE, echo=TRUE}
 train_ds[1]
 ```
 
 #### Creating the respective `dataloader`s
 
-While there is nothing new about the calls to `dataloader()` here, it is interesting to check the shape of the batches it returns.
-
-```{r}
+```{r, eval=FALSE, echo=TRUE}
 batch_size <- 32
 
 train_dl <- train_ds %>% dataloader(batch_size = batch_size, shuffle = TRUE)
@@ -1321,19 +1320,23 @@ valid_dl <- valid_ds %>% dataloader(batch_size = batch_size)
 
 ```
 
-A batch of `x`s now has shape `(32, 14, 1)`. Since after batching, the batch items are found in the leftmost dimension, the consecutive time steps are now located in the second-from-the-left one:
+While there is nothing new about the calls to `dataloader()` here, it is interesting to check the shape of the batches it returns.
 
-```{r}
+```{r, eval=FALSE, echo=TRUE}
 b <- dataloader_make_iter(train_dl) %>% dataloader_next()
 b
 
 ```
+
+A batch of `x`s now has shape `(32, 14, 1)`. Since after batching, the batch items are found in the leftmost dimension, the consecutive time steps are now located in the second-from-the-left one.
 
 This will turn out to be important because of the shape of the inputs expected by RNNs.
 
 ### Model
 
 The model is basically just a wrapper for an RNN, with an add-on linear layer that outputs a single prediction.
+
+#### More about GRUs
 
 Before we look at the way the model makes use of the RNN (a GRU), let's inspect how a GRU behaves individually. We will want to know
 
@@ -1343,44 +1346,43 @@ Before we look at the way the model makes use of the RNN (a GRU), let's inspect 
 
 -   what it returns.
 
-```{r}
-# batch of 3, with 4 time steps each and a single feature
-# we will specify batch_first = TRUE when creating the LSTM
-input <- torch_randn(c(3, 4, 1))
-input
+Firstly, to create a GRU, we need to at least pass it the number of input features and the number of units in the hidden layer. If our data has batch items in its first dimension, we also need to pass `batch_first = TRUE`. For example:
 
-
-# default args
-# return shape = (batch_size, units)
-#
-# note: there is an additional argument num_layers that we could use to specify a stacked GRU - effectively composing two GRU modules
-# default for num_layers is 1 though 
+```{r, eval=FALSE, echo=TRUE}
 gru <- nn_gru(
   input_size = 1, # number of input features
-  hidden_size = 1, # number of hidden (and output!) features
-  batch_first = TRUE # for easy comparability with Keras
+  hidden_size = 5, # number of hidden (and output!) features
+  batch_first = TRUE 
 )
+```
 
-nn_init_constant_(gru$weight_ih_l1, 1)
-nn_init_constant_(gru$weight_hh_l1, 1)
-nn_init_constant_(gru$bias_ih_l1, 0)
-nn_init_constant_(gru$bias_hh_l1, 0)
+Secondly, the expected input format (provided we've created the module "batch first", like we did above) is: `(batch_size, num_timesteps, num_features)`.
 
-# returns a list of length 2, namely
-#   - outputs, of shape (batch_size, time steps, hidden_size) - given we specified batch_first
-#       Note 1: If this is a stacked GRU, these are the outputs from the last layer only.
-#               For our current purpose, this is irrelevant, as we're restricting ourselves to single-layer GRUs.
-#       Note 2: hidden_size here is equivalent to units in Keras - both specify number of features
-#  - list of:
-#    - hidden state for the last time step, of shape (num_layers, batch_size, hidden_size)
-#    - cell state for the last time step, of shape (num_layers, batch_size, hidden_size)
-#       Note 3: For a single-layer GRU, these values are already provided in the first list item.
+Here's some random data fitting the requirements:
+
+```{r, eval=FALSE, echo=TRUE}
+# batch of 4, with 8 time steps each and a single feature
+input <- torch_randn(c(4, 8, 1))
+```
+
+Finally, the GRU module returns a list of two things:
+
+-   the output, of shape `(batch_size, num_timesteps, num_hidden)` . (Again, presupposing "batch-first".)
+
+-   the final hidden state for the last time-step only, of shape `(1, batch_size, num_hidden)`.
+
+For a GRU (as opposed to LSTM), there is *no difference between hidden and output when it comes to the final time-step*.Thus, the second tensor in the above list provides no additional information.
+
+```{r, eval=FALSE, echo=TRUE}
 gru(input)
-
 
 ```
 
-```{r}
+#### Complete prediction module
+
+The model takes the output from the last time-step and passes it to the linear output layer, resulting in a single predicted value.
+
+```{r, eval=FALSE, echo=TRUE}
 model <- nn_module(
   
   initialize = function(input_size, hidden_size) {
@@ -1398,15 +1400,10 @@ model <- nn_module(
   forward = function(x) {
     
     # list of [output, hidden]
-    # we use the output, which is of size (batch_size, n_timesteps, hidden_size)
-    x <- self$rnn(x)[[1]]
-    
-    # from the output, we only want the final timestep
-    # shape now is (batch_size, hidden_size)
-    x <- x[ , dim(x)[2], ]
-    
-    # feed this to a single output neuron
-    # final shape then is (batch_size, 1)
+    # we are interested in the final timestep only, so we can directly use [[2]]
+    # but we want to remove the un-needed singleton dimension on the left
+    x <- self$rnn(x)[[2]]$squeeze(1)
+
     x %>% self$output() 
   }
   
@@ -1414,12 +1411,317 @@ model <- nn_module(
 
 ```
 
+### Training
+
+```{r, eval=FALSE, echo=TRUE}
+fitted <- model %>%
+  setup(
+    loss = nn_mse_loss(),
+    optimizer = optim_adam,
+    metrics = list(
+     luz_metric_mse()
+    )
+  ) %>%
+  set_hparams(input_size = 1, hidden_size = 64) %>%
+  fit(train_dl, epochs = 20, valid_data = valid_dl, verbose = TRUE)
+```
+
+### Test-time predictions
+
+For testing and plotting, let's use the first four months of the validation set. (Shortening the time window will make for a more useful plot.)
+
+```{r, eval=FALSE, echo=TRUE}
+vic_elec_test <- vic_elec_daily %>% 
+  filter(year(Date) %in% c(2014), month(Date) %in% 1:4) 
+
+elec_test <- vic_elec_test %>%
+  as_tibble() %>%
+  select(Demand) %>%
+  as.matrix()
+
+test_ds <- elec_dataset(elec_test, n_timesteps)
+
+test_dl <- test_ds %>% dataloader(batch_size = batch_size)
+
+```
+
+Using `luz` to obtain the predictions:
+
+```{r, eval=FALSE, echo=TRUE}
+preds <- predict(fitted, test_dl)
+preds <- as.numeric(preds)
+```
+
+We can plot them against the ground truth:
+
+```{r, eval=FALSE, echo=TRUE}
+preds <- c(rep(NA, n_timesteps), preds)
+
+preds_ts <- vic_elec_daily %>% 
+  filter(year(Date) %in% c(2014), month(Date) %in% 1:4) %>%
+  add_column(forecast = preds * train_sd + train_mean) %>%
+  pivot_longer(-Date) %>%
+  update_tsibble(key = name)
+
+preds_ts %>%
+  autoplot() +
+  scale_colour_manual(values = c("#08c5d1", "#00353f")) +
+  theme_minimal()
+
+
+
+```
+
 ### Exercise: Extending the model to multi-step prediction
 
-#### What changes
+Often, we want to forecast further into the future than just a single time-step. In an extended exercise, you'll adapt `dataset` and model to enable multi-step-ahead prediction.
+
+#### Required changes
+
+##### `dataset`
+
+In the `dataset`, we now distinguish between the number of time-steps to base learning on (`n_timesteps`), and the number of time-steps to forecast (`n_forecast`).
+
+In `.getitem()`, the tensor returned in `x` remains unchanged, while in `y`, we return `n_forecast` values immediately following the last `x` component.
+
+Due to the new logic, `.length()` will have to change as well.
+
+##### Model
+
+The model now should output `n_forecast` values. The simplest way to achieve this is to have the final linear layer return `n_forecast` values instead of a single one. However, depending on the data this may or may not result in satisfying performance.
+
+Instead, we can chain several linear layers, joined by nonlinearities. Put differently, we'll have a "network inside the network" -- the GRU will be followed by a feedforward neural network, also referred to as Multi-Layer Perceptron (MLP).
+
+In this second and significantly more powerful approach, it is easy to overfit to the training set. To counteract overfitting, we additionally put in a `dropout` layer. With *dropout*, a configurable amount of randomness is added to the training process (but neither to validation nor to testing). Technically, this is achieved by randomly zeroing out the desired fraction of elements in the layer's input tensor.
+
+Below, you'll find instructions to implement the second alternative.
 
 #### Exercise part 1: Adapting the `dataset`
 
+Please start by making the above-mentioned changes in the `dataset`.
+
+```{r multi-step-ds, exercise=TRUE, exercise.eval=TRUE}
+elec_dataset <- dataset(
+  name = "elec_dataset",
+  
+  initialize = function(x, n_timesteps, n_forecast) {
+    
+  },
+  
+  .getitem = function(i) {
+    
+  
+  },
+  
+  .length = function() {
+    
+  }
+)
+
+```
+
+```{r multi-step-ds-hint}
+elec_dataset <- dataset(
+  name = "elec_dataset",
+  
+  initialize = function(x, n_timesteps, n_forecast) {
+    
+    self$n_timesteps <- n_timesteps
+    self$n_forecast <- n_forecast
+    self$x <- torch_tensor((x - train_mean) / train_sd)
+
+  },
+  
+  .getitem = function(i) {
+    
+    start <- i
+    end <- start + self$n_timesteps - 1
+    pred_length <- self$n_forecast
+    
+    list(
+      x = self$x[start:end],
+      y = self$x[(end + 1):(end + pred_length)]$squeeze(2)
+    )
+    
+  },
+  
+  .length = function() {
+    length(self$x) - self$n_timesteps - self$n_forecast + 1
+  }
+)
+
+```
+
+Once you've updated the `dataset` definition, you'll need to recreate `train_ds` and `valid_ds`. Pick a number for the forecast window (`n_forecast`), for example, fourteen days:
+
+```{r, eval=FALSE, echo=TRUE}
+n_timesteps <- 7 * 2
+n_forecast <- 7 * 2 
+
+train_ds <- elec_dataset(elec_train, n_timesteps, n_forecast)
+
+valid_ds <- elec_dataset(elec_valid, n_timesteps, n_forecast)
+```
+
+To check your implementation, make sure that
+
+```{r, eval=FALSE, echo=TRUE}
+length(train_ds)
+train_ds[1]
+```
+
+work correctly.
+
+To proceed to the next step, you'll also need to recreate the dataloaders.
+
+```{r, eval=FALSE, echo=TRUE}
+batch_size <- 32
+train_dl <- train_ds %>% dataloader(batch_size = batch_size, shuffle = TRUE)
+
+valid_dl <- valid_ds %>% dataloader(batch_size = batch_size)
+```
+
 #### Exercise part 2: Adapting the model
 
-#### Exercise part 3: Run training and check
+Now, adapt the model, in the sense described above.
+
+```{r multi-step-model, exercise=TRUE, exercise.eval=TRUE}
+model <- nn_module(
+  
+  # to avoid hard coding specific values, you can add more "hparams" here
+  initialize = function(input_size, hidden_size, ...) {
+    
+    self$rnn <- nn_gru(
+        input_size = input_size,
+        hidden_size = hidden_size,
+        batch_first = TRUE
+      )
+    
+    # a feedforward neural network, using nn_dropout before the output layer
+    self$mlp <- nn_sequential(
+      
+      
+      
+    )
+    
+  },
+  
+  forward = function(x) {
+    
+    
+    
+  }
+  
+)
+
+```
+
+```{r multi-step-model-hint}
+model <- nn_module(
+  
+  initialize = function(input_size, hidden_size, linear_size, output_size, dropout = 0) {
+    
+    self$rnn <- nn_gru(
+        input_size = input_size,
+        hidden_size = hidden_size,
+        batch_first = TRUE
+      )
+    
+    self$mlp <- nn_sequential(
+      nn_linear(hidden_size, linear_size),
+      nn_relu(),
+      nn_dropout(dropout),
+      nn_linear(linear_size, output_size)
+    )
+    
+  },
+  
+  forward = function(x) {
+    
+    x <- self$rnn(x)
+    # pass last timestep of RNN output to MLP
+    x[[1]][ ,-1, ..] %>% 
+      self$mlp()
+    
+  }
+  
+)
+
+```
+
+#### Exercise part 3: Run training
+
+Training looks much like above, apart from the fact that you'll need to set more `hparams`.
+
+```{r multi-step-fit, exercise=TRUE, exercise.eval=TRUE}
+#fitted <-
+```
+
+```{r multi-step-fit-hint}
+fitted <- model %>%
+  setup(
+    loss = nn_mse_loss(),
+    optimizer = optim_adam,
+    metrics = list(
+     luz_metric_mse()
+    )
+  ) %>%
+  set_hparams(input_size = 1, hidden_size = 64, linear_size = 128,
+             output_size = n_forecast, dropout = 0.5) %>%
+  fit(train_dl, epochs = 20, valid_data = valid_dl, verbose = TRUE)
+```
+
+Once you're done, here is some code to visualize a selection of forecast sequences (feel free to adapt).
+
+```{r, eval=FALSE, echo=TRUE}
+preds <- predict(fitted, test_dl)
+preds <- as.matrix(preds)
+```
+
+```{r, eval=FALSE, echo=TRUE}
+test_pred1 <- preds[1, ]
+test_pred1 <- c(rep(NA, n_timesteps), test_pred1, rep(NA, nrow(vic_elec_test) - n_timesteps - n_forecast))
+
+test_pred2 <- preds[21, ]
+test_pred2 <- c(rep(NA, n_timesteps + 20), test_pred2, rep(NA, nrow(vic_elec_test) - 20 - n_timesteps - n_forecast))
+
+test_pred3 <- preds[41, ]
+test_pred3 <- c(rep(NA, n_timesteps + 40), test_pred3, rep(NA, nrow(vic_elec_test) - 40 - n_timesteps - n_forecast))
+
+test_pred4 <- preds[61, ]
+test_pred4 <- c(rep(NA, n_timesteps + 60), test_pred4, rep(NA, nrow(vic_elec_test) - 60 - n_timesteps - n_forecast))
+
+test_pred5 <- preds[81, ]
+test_pred5 <- c(rep(NA, n_timesteps + 80), test_pred5, rep(NA, nrow(vic_elec_test) - 80 - n_timesteps - n_forecast))
+
+preds_ts <- vic_elec_test %>% 
+  add_column(
+    ex_1 = test_pred1 * train_sd + train_mean,
+    ex_2 = test_pred2 * train_sd + train_mean,
+    ex_3 = test_pred3 * train_sd + train_mean,
+    ex_4 = test_pred4 * train_sd + train_mean,
+    ex_5 = test_pred5 * train_sd + train_mean) %>%
+  pivot_longer(-Date) %>%
+  update_tsibble(key = name)
+
+
+preds_ts %>%
+  autoplot() +
+  scale_color_hue(h = c(80, 300), l = 70) +
+  theme_minimal()
+
+```
+
+## Q&A
+
+Questions?
+
+Stay in contact:
+
+-   GitHub: [torch](https://github.com/torch), [luz](https://github.com/luz), ...
+
+-   Discord: [torch for R](https://discord.com/invite/s3D5cKhBkx)
+
+-   Blog: [RStudio AI Blog](https://blogs.rstudio.com/ai/)
+
+Thanks for your attention!!
