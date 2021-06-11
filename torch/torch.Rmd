@@ -26,7 +26,7 @@ knitr::opts_chunk$set(echo = FALSE)
 
 [`torch`](http:/torch.mlverse.org) is an *R-native* framework for fast array computation with automatic differentiation and rich neural-network functionality.
 
-TBD pic
+![](torch_arch.png "torch architecture")
 
 ### `luz`
 
