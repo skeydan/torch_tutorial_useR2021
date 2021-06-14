@@ -26,7 +26,7 @@ knitr::opts_chunk$set(echo = FALSE)
 
 [`torch`](http:/torch.mlverse.org) is an *R-native* framework for fast array computation with automatic differentiation and rich neural-network functionality.
 
-![](torch_arch.png "torch architecture")
+![](images/torch_arch.png)
 
 ### `luz`
 
@@ -856,7 +856,7 @@ In `torch` , data is fed to a network using `dataset`s and `dataloaders`. Their 
 
 -   `dataloader`: Feed the data to the model. Normally, this happens in *batches* of configurable size. Optionally, a `dataloader` may shuffle the data, and arrange for parallelization over a subset of available processors.
 
-`torchvision` comes with a few image datasets, requestable via `xxx_dataset()`. They will be downloaded and prepared the first time they're instantiated (unless the data exist already in the specified location.
+`torchvision` comes with a few image datasets, requestable via `xxx_dataset()`. They will be downloaded and prepared the first time they're instantiated (unless the data exist already in the specified location).
 
 Since we don't really need the full MNIST dataset for this demonstration, we only prepare the test split (indicated by the line `train = FALSE` below). We'll split it up manually into training and validation parts in a minute.
 
@@ -1058,7 +1058,7 @@ which_epoch_callback <- luz_callback(
 
 ### Exercise: Creating a custom metric
 
-While `luz` provides a great number of metrics, you can easily implement your own if needed. *Metric* objects keep running aggregates of the indicator. in question. At each epoch, aggregates are re-initialized to their starting values (zero, in most cases).
+While `luz` provides a great number of metrics, you can easily implement your own if needed. *Metric* objects keep running aggregates of the indicator in question. At each epoch, aggregates are re-initialized to their starting values (zero, in most cases).
 
 A `luz` metric is an R6 object with three methods:
 
@@ -1066,7 +1066,7 @@ A `luz` metric is an R6 object with three methods:
 
 -   `update()`, telling `luz` how to update these variables at every training (validation, resp.) step; and
 
--   `compute()`, used to define the indicator to be outputted to the user.
+-   `compute()`, used to define the indicator to be returned to the user.
 
 Below, you'll be tasked to implement accuracy yourself. Here is an outline of what's to be done:
 
@@ -1084,7 +1084,7 @@ my_accuracy <- luz_metric(
   },
  
   update = function(preds, target) {
-    # 1: use pred (function input no. 1) to compute the indices of the most likely class (for the complete batch)
+    # 1: use pred (function argument no. 1) to compute the indices of the most likely class (for the complete batch)
     # pred <- 
     
     # 2: update self$correct: add number of correct predictions
@@ -1205,7 +1205,7 @@ In a linear model, individual observations are independent. Their order does not
 
 But with sequences, such as spoken language or consecutive-in-time measurements, the order is essential. We thus need neural network models that respect sequentiality.
 
-Traditionally, the type of data we're talking about has been the domain of *recurrent neural networks* (RNNs). They are called *recurrent* because, in addition to handling a new batch item at every [processing] time step, they keep -- and continuously update -- an internal state. This is often referred to as the *hidden* *state*.
+Traditionally, the type of data we're talking about has been the domain of *recurrent neural networks* (RNNs). They are called *recurrent* because, in addition to handling a new batch item at every (training) time step, they keep -- and continuously update -- an internal state. This is often referred to as the *hidden* *state*.
 
 In this family of RNNs, the most-established model architectures are *Gated Recurrent Unit* (GRU) and *Long Short-Term Memory* (LSTM). LSTM differs from GRU in that it keeps an additional internal state, sometimes called *cell state*, that is said to enable it to keep longer-term remembrances. In this tutorial, we use GRUs only, but adapting the code for LSTM is a manageable effort.
 
@@ -1572,7 +1572,7 @@ train_ds[1]
 
 work correctly.
 
-To proceed to the next step, you'll also need to recreate the dataloaders.
+To proceed to the next step, you'll also need to recreate the `dataloader`s.
 
 ```{r, eval=FALSE, echo=TRUE}
 batch_size <- 32
