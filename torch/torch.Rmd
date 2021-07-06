@@ -69,12 +69,17 @@ What `keras` is to `tensorflow` -- a high-level API streamlining and instrumenti
 To follow this tutorial, you will need to install the following packages:
 
 ```{r}
+library(learnr)
 library(torch)
 library(luz)
 library(torchvision)
-
-library(learnr)
-library(dplyr)
+library(tidyverse)
+library(tsibble)
+library(tsibbledata)
+library(lubridate)
+library(fable)
+library(feasts)
+library(zeallot)
 ```
 
 ## `torch` tensors, modules, and autograd
