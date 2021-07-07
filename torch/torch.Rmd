@@ -321,7 +321,7 @@ t1
 t2
 ```
 
-2.  Multiply the matrices, sum over all elements, and take the square root:
+2.  Multiply the matrices, square all elements, sum them, and take the square root:
 
 ```{r tensors2, exercise=TRUE, exercise.eval=TRUE}
 (m1 %*% m2)^2 %>% sum() %>% sqrt()
